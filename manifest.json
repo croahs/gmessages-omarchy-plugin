@@ -22,7 +22,8 @@
       "serviceName": "gmessagesd.service",
       "cameraDevice": "/dev/video0",
       "audioDevice": "default",
-      "normalizeVoice": true
+      "normalizeVoice": true,
+      "windowMode": false
     },
     "schema": [
       {
@@ -49,6 +50,11 @@
         "key": "normalizeVoice",
         "type": "boolean",
         "label": "Normalise voice recording level"
+      },
+      {
+        "key": "windowMode",
+        "type": "boolean",
+        "label": "Open as a regular (tiled) window instead of a bar popup"
       }
     ]
   }

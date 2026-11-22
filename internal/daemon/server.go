@@ -233,6 +233,24 @@ func (d *Daemon) dispatch(ctx context.Context, req wire.Request) wire.Response {
 		}
 		return ok(msg)
 
+	case wire.MethodContacts:
+		contacts, err := d.Contacts(ctx)
+		if err != nil {
+			return fail(err)
+		}
+		return ok(contacts)
+
+	case wire.MethodNewConversation:
+		p, err := decodeParams[wire.NewConversationParams](req.Params)
+		if err != nil {
+			return fail(err)
+		}
+		conv, err := d.NewConversation(ctx, p)
+		if err != nil {
+			return fail(err)
+		}
+		return ok(conv)
+
 	case wire.MethodMarkRead:
 		p, err := decodeParams[wire.MarkReadParams](req.Params)
 		if err != nil {

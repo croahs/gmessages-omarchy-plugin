@@ -65,6 +65,10 @@ const (
 	MethodAvatar          = "avatar"
 	MethodSetTyping       = "setTyping"
 	MethodRefresh         = "refresh"
+	// MethodContacts and MethodNewConversation back the "new message" flow:
+	// pick a contact or type a number, and get a conversation to write in.
+	MethodContacts        = "contacts"
+	MethodNewConversation = "newConversation"
 )
 
 // ConnState describes where the daemon is in its lifecycle. The plugin keys
@@ -316,6 +320,17 @@ type DiscardCaptureParams struct {
 // PickImageResult carries the chosen path, or empty when the user cancelled.
 type PickImageResult struct {
 	Path string `json:"path"`
+}
+
+// Contact is one entry from the phone's contact list.
+type Contact struct {
+	Name   string `json:"name"`
+	Number string `json:"number"`
+}
+
+// NewConversationParams opens (or finds) the one-to-one thread with Number.
+type NewConversationParams struct {
+	Number string `json:"number"`
 }
 
 type MarkReadParams struct {

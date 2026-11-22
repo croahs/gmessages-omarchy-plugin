@@ -137,6 +137,112 @@ Panel {
     return out
   }
 
+  // ---- keyboard (Matcha-style) ----
+  //
+  // List mode is the default: arrows, j/k or Tab/Shift+Tab move through the
+  // conversations, Enter/l/i writes in the selected one, / searches, c or
+  // Ctrl+N starts a new message, u jumps to unread, r refreshes, Esc closes.
+  // In the composer, Search and the new-message field, Esc returns to the list.
+  // The focus targets live inside the clientView Component, so the root asks
+  // for focus changes through signals instead of reaching for their ids.
+  signal focusSearchRequested()
+  signal focusComposerRequested()
+  signal listPositionRequested(int index)
+
+  property bool searchFocus: false
+  property bool newChatOpen: false
+  property string newChatQuery: ""
+  property int newChatIndex: 0
+  property string newChatError: ""
+  property bool newChatBusy: false
+  property var contacts: []
+
+  function focusList() { keyCatcher.forceActiveFocus() }
+
+  function moveSelection(delta) {
+    var list = root.visibleConversations
+    if (!list || list.length === 0) return
+    var idx = -1
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === root.selectedConvID) { idx = i; break }
+    }
+    var next = idx < 0 ? (delta > 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, idx + delta))
+    root.selectConversation(list[next].id)
+    root.listPositionRequested(next)
+  }
+
+  function moveToEdge(last) {
+    var list = root.visibleConversations
+    if (!list || list.length === 0) return
+    var i = last ? list.length - 1 : 0
+    root.selectConversation(list[i].id)
+    root.listPositionRequested(i)
+  }
+
+  function writeInSelected() {
+    if (root.selectedConvID === "") root.moveSelection(1)
+    if (root.selectedConvID !== "") root.focusComposerRequested()
+  }
+
+  // A typed number is offered first, then matching contacts.
+  readonly property var newChatMatches: {
+    var q = root.newChatQuery.trim().toLowerCase()
+    var out = []
+    var digits = q.replace(/[\s\-()]/g, "")
+    if (/^\+?[0-9]{3,}$/.test(digits)) out.push({ name: "", number: digits })
+    if (q === "") return out
+    for (var i = 0; i < root.contacts.length && out.length < 8; i++) {
+      var c = root.contacts[i]
+      if ((c.name || "").toLowerCase().indexOf(q) >= 0
+          || (c.number || "").replace(/[\s\-()]/g, "").indexOf(digits) >= 0) out.push(c)
+    }
+    return out
+  }
+
+  function openNewChat() {
+    root.newChatQuery = ""
+    root.newChatIndex = 0
+    root.newChatError = ""
+    root.newChatOpen = true
+    if (root.contacts.length === 0) {
+      gm.call("contacts", {}, function(ok, res) {
+        if (ok && res) root.contacts = res
+      })
+    }
+  }
+
+  function closeNewChat() {
+    root.newChatOpen = false
+    root.focusList()
+  }
+
+  function startNewChat(number) {
+    if (!number || root.newChatBusy) return
+    root.newChatBusy = true
+    root.newChatError = ""
+    gm.call("newConversation", { number: number }, function(ok, res) {
+      root.newChatBusy = false
+      if (!ok || !res || !res.id) {
+        root.newChatError = ok ? "No conversation came back" : String(res)
+        return
+      }
+      root.newChatOpen = false
+      if (root.searchQuery !== "") root.searchQuery = ""
+      root.selectConversation(res.id)
+      Qt.callLater(root.focusComposerRequested)
+    })
+  }
+
+  function isCtrlN(event) {
+    return (event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_N
+  }
+
+  // Ctrl+F searches from anywhere; "/" only works in the list, because in the
+  // composer it has to stay a character you can type.
+  function isCtrlF(event) {
+    return (event.modifiers & Qt.ControlModifier) && event.key === Qt.Key_F
+  }
+
   // ---- client ----
 
   GmClient {
@@ -823,25 +929,80 @@ Panel {
   // version risked binding loops, because a positioner assigns y while the
   // child was deriving its height from that same y.
 
+  // windowMode shows the same content in a regular toplevel window instead of
+  // the bar popup, so the compositor tiles it and gives it keyboard focus.
+  readonly property bool windowMode: root.setting("windowMode", false) === true
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
     owner: root.barIdentity
     bar: root.bar
-    open: root.opened
+    open: root.opened && !root.windowMode
     centerOnBar: true
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(880))
     contentHeight: panel.cappedContentHeight(Style.space(560))
 
-    PanelKeyCatcher {
+    Item {
+      id: panelHost
+      anchors.fill: parent
+    }
+  }
+
+  FloatingWindow {
+    id: messagesWindow
+    title: "Messages"
+    color: Color.popups.background
+    implicitWidth: Style.space(880)
+    implicitHeight: Style.space(560)
+    visible: root.windowMode && root.opened
+
+    // Closing the window from the compositor (e.g. Super+W) closes the panel
+    // state too, so the next toggle opens it again instead of doing nothing.
+    onVisibleChanged: {
+      if (visible) Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      else if (root.windowMode && root.opened) root.close()
+    }
+
+    Item {
+      id: windowHost
+      anchors.fill: parent
+      anchors.margins: Style.space(16)
+    }
+  }
+
+  PanelKeyCatcher {
       id: keyCatcher
+      parent: root.windowMode ? windowHost : panelHost
       anchors.fill: parent
       // The composer owns the keyboard whenever a thread is open, otherwise
       // typing a reply would be swallowed as panel navigation.
-      blocked: composerFocus || root.textSelected
-      onCloseRequested: root.close()
-      onTabRequested: function(direction) { root.switchPanel(direction) }
+      blocked: composerFocus || root.textSelected || root.searchFocus || root.newChatOpen
+      onCloseRequested: {
+        if (root.searchQuery !== "") root.searchQuery = ""
+        else root.close()
+      }
+      onTabRequested: function(direction) { root.moveSelection(direction) }
+      onMoveRequested: function(dx, dy) {
+        if (dy !== 0) root.moveSelection(dy)
+        else if (dx > 0) root.writeInSelected()
+      }
+      onActivateRequested: root.writeInSelected()
+      onTextKey: function(text, modifiers) {
+        if (modifiers & Qt.ControlModifier) {
+          if (text === "\u000e" || text.toLowerCase() === "n") root.openNewChat()
+          else if (text === "\u0006" || text.toLowerCase() === "f") root.focusSearchRequested()
+          return
+        }
+        if (text === "/") root.focusSearchRequested()
+        else if (text === "c") root.openNewChat()
+        else if (text === "i") root.writeInSelected()
+        else if (text === "u") root.jumpToUnread()
+        else if (text === "r") root.refresh()
+        else if (text === "g") root.moveToEdge(false)
+        else if (text === "G") root.moveToEdge(true)
+      }
 
       // ---- header ----
       Item {
@@ -907,7 +1068,6 @@ Panel {
           return clientView
         }
       }
-    }
   }
 
   // Tracks composer focus without the delegate tree having to reach into the
@@ -1289,9 +1449,125 @@ Panel {
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.top: parent.top
-          placeholderText: "Search conversations"
+          placeholderText: "Search conversations  (Ctrl+F)"
           foreground: root.foreground
+          visible: !root.newChatOpen
           onTextChanged: root.searchQuery = text
+          onActiveFocusChanged: root.searchFocus = activeFocus
+          Keys.onPressed: function(event) {
+            if (event.key === Qt.Key_Escape) {
+              text = ""
+              root.focusList()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                       || event.key === Qt.Key_Down || event.key === Qt.Key_Tab) {
+              root.focusList()
+              root.moveToEdge(false)
+              event.accepted = true
+            } else if (root.isCtrlN(event)) {
+              root.openNewChat()
+              event.accepted = true
+            }
+          }
+
+          Connections {
+            target: root
+            function onFocusSearchRequested() { searchField.forceActiveFocus(); searchField.selectAll() }
+            function onSearchQueryChanged() { if (searchField.text !== root.searchQuery) searchField.text = root.searchQuery }
+            function onListPositionRequested(index) { convList.positionViewAtIndex(index, ListView.Contain) }
+          }
+        }
+
+        // ---- new message: name or number, then pick with arrows/Tab ----
+        TextField {
+          id: newChatField
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: parent.top
+          visible: root.newChatOpen
+          placeholderText: "New message to: name or number"
+          foreground: root.foreground
+          text: root.newChatQuery
+          onTextChanged: { root.newChatQuery = text; root.newChatIndex = 0 }
+          onVisibleChanged: if (visible) Qt.callLater(function() { newChatField.forceActiveFocus() })
+          Keys.onPressed: function(event) {
+            var n = root.newChatMatches.length
+            if (event.key === Qt.Key_Escape) {
+              root.closeNewChat()
+              event.accepted = true
+            } else if (root.isCtrlF(event)) {
+              root.newChatOpen = false
+              root.focusSearchRequested()
+              event.accepted = true
+            } else if (event.key === Qt.Key_Down || (event.key === Qt.Key_Tab && !(event.modifiers & Qt.ShiftModifier))) {
+              if (n > 0) root.newChatIndex = (root.newChatIndex + 1) % n
+              event.accepted = true
+            } else if (event.key === Qt.Key_Up || event.key === Qt.Key_Backtab) {
+              if (n > 0) root.newChatIndex = (root.newChatIndex - 1 + n) % n
+              event.accepted = true
+            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              if (n > 0) root.startNewChat(root.newChatMatches[Math.min(root.newChatIndex, n - 1)].number)
+              event.accepted = true
+            }
+          }
+        }
+
+        Column {
+          id: newChatList
+          visible: root.newChatOpen
+          z: 2
+          anchors.left: parent.left
+          anchors.right: parent.right
+          anchors.top: newChatField.bottom
+          anchors.topMargin: Style.space(6)
+          spacing: Style.space(2)
+
+          Repeater {
+            model: root.newChatMatches
+            delegate: Rectangle {
+              required property var modelData
+              required property int index
+              width: newChatList.width
+              height: Style.space(40)
+              radius: Style.space(6)
+              color: index === root.newChatIndex
+                ? Style.selectedFillFor(root.foreground, Color.accent)
+                : "transparent"
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.startNewChat(parent.modelData.number)
+              }
+
+              Text {
+                anchors.left: parent.left
+                anchors.leftMargin: Style.space(10)
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(10)
+                anchors.verticalCenter: parent.verticalCenter
+                elide: Text.ElideRight
+                text: parent.modelData.name
+                  ? parent.modelData.name + "   " + parent.modelData.number
+                  : "Send to " + parent.modelData.number
+                color: root.foreground
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+            }
+          }
+
+          Text {
+            visible: root.newChatError !== "" || root.newChatBusy
+              || (root.newChatQuery.trim() !== "" && root.newChatMatches.length === 0)
+            width: newChatList.width
+            wrapMode: Text.Wrap
+            text: root.newChatBusy ? "Opening conversation\u2026"
+              : (root.newChatError !== "" ? root.newChatError : "No matching contact")
+            color: root.newChatError !== "" ? Color.urgent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
         }
 
         Connections {
@@ -1309,7 +1585,7 @@ Panel {
         // of the time.
         Rectangle {
           id: unreadChip
-          visible: root.unreadConversations > 0
+          visible: root.unreadConversations > 0 && !root.newChatOpen
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.top: searchField.bottom
@@ -1338,6 +1614,7 @@ Panel {
 
         ListView {
           id: convList
+          visible: !root.newChatOpen
           anchors.left: parent.left
           anchors.right: parent.right
           anchors.top: unreadChip.visible ? unreadChip.bottom : searchField.bottom
@@ -1553,7 +1830,7 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             iconText: root.recording ? "\u{23F9}" : "\u{1F3A4}"
             tooltipText: root.recording ? "Stop recording" : "Record a voice message"
-            foreground: root.recording ? "#e06c75" : root.foreground
+            foreground: root.recording ? Color.urgent : root.foreground
             fontFamily: root.fontFamily
             enabled: composer.enabled && !root.sendingMedia
             onClicked: root.recording ? root.stopRecording(true) : root.startRecording()
@@ -1603,6 +1880,26 @@ Panel {
               text = ""
             }
             onActiveFocusChanged: root.composerFocus = activeFocus
+            Keys.onPressed: function(event) {
+              if (event.key === Qt.Key_Escape) {
+                root.focusList()
+                event.accepted = true
+              } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                root.moveSelection(event.key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
+                event.accepted = true
+              } else if (root.isCtrlN(event)) {
+                root.openNewChat()
+                event.accepted = true
+              } else if (root.isCtrlF(event)) {
+                root.focusSearchRequested()
+                event.accepted = true
+              }
+            }
+
+            Connections {
+              target: root
+              function onFocusComposerRequested() { if (composer.enabled) composer.forceActiveFocus() }
+            }
           }
         }
 
@@ -1621,7 +1918,7 @@ Panel {
           radius: Style.space(8)
           color: Color.popups.background
           border.width: 1
-          border.color: "#e06c75"
+          border.color: Color.urgent
 
           MouseArea { anchors.fill: parent; hoverEnabled: true }
 
@@ -1633,7 +1930,7 @@ Panel {
             width: Style.space(10)
             height: width
             radius: width / 2
-            color: "#e06c75"
+            color: Color.urgent
             SequentialAnimation on opacity {
               running: root.recording
               loops: Animation.Infinite
