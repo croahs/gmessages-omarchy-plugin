@@ -17,14 +17,15 @@ Rectangle {
   implicitWidth: Style.space(36)
   implicitHeight: Style.space(36)
   radius: width / 2
-  color: Model.avatarColor(hexColor, seed, fallbackColor)
+  // Theme colours only: an accent-tinted disc with accent initials.
+  color: Qt.rgba(fallbackColor.r, fallbackColor.g, fallbackColor.b, 0.22)
   clip: true
 
   Text {
     anchors.centerIn: parent
     visible: avatarImage.status !== Image.Ready
     text: root.initials
-    color: "#ffffff"
+    color: root.fallbackColor
     font.family: root.fontFamily
     font.pixelSize: Math.round(root.height * 0.4)
     font.bold: true
