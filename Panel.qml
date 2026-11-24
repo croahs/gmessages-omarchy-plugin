@@ -115,7 +115,8 @@ Panel {
   readonly property bool ready: gm.state === "connected"
 
   readonly property color foreground: bar ? bar.foreground : Color.foreground
-  readonly property color dim: Qt.darker(foreground, 1.5)
+  // Fades toward whatever is behind, so it reads as secondary on light and dark themes.
+  readonly property color dim: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.6)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property var selectedConv: {
