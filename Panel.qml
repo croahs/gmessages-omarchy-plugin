@@ -1024,9 +1024,39 @@ Panel {
           font.bold: true
         }
 
+        // Unpairing drops the session, so it takes a second click within a
+        // few seconds; a stray click next to Refresh must not cost a pairing.
+        PanelActionButton {
+          id: unpairBtn
+          property bool armed: false
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          visible: gm.connected && gm.state !== "unpaired" && gm.state !== "pairing"
+                   && gm.state !== "gaiaPairing"
+          iconText: armed ? "󰄬" : "󰍃"
+          tooltipText: armed ? "Click again to unpair" : "Unpair this computer"
+          foreground: armed ? Color.urgent : root.foreground
+          fontFamily: root.fontFamily
+          onClicked: {
+            if (armed) {
+              armed = false
+              root.unpair()
+            } else {
+              armed = true
+              unpairDisarm.restart()
+            }
+          }
+          Timer {
+            id: unpairDisarm
+            interval: 4000
+            onTriggered: unpairBtn.armed = false
+          }
+        }
+
         PanelActionButton {
           id: refreshBtn
-          anchors.right: parent.right
+          anchors.right: unpairBtn.visible ? unpairBtn.left : parent.right
+          anchors.rightMargin: unpairBtn.visible ? Style.space(2) : 0
           anchors.verticalCenter: parent.verticalCenter
           iconText: "󰑐"
           tooltipText: "Refresh"

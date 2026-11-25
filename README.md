@@ -104,7 +104,7 @@ gmessagesd pair --from-browser     # read cookies automatically
 gmessagesd pair                    # paste a "Copy as cURL" from devtools
 ```
 
-To unpair: press **Unpair** in the panel, delete the session file, or revoke
+To unpair: press the unpair button (󰍃) in the panel header twice, delete the session file, or revoke
 the device from your phone.
 
 ## Configuration
@@ -307,6 +307,13 @@ Reading the browser's cookies is reactive only: on an actual authentication
 failure, when our copy is known bad and the browser is the only other source.
 If the session is already gone the daemon re-pairs itself, which is usually
 silent once your account trusts the device.
+
+The phone can also drop this pairing's encryption keys on its own while
+Google's side stays valid: updates keep arriving but none of them decrypt,
+and the phone never answers. The daemon treats a run of decrypt failures with
+nothing decrypted in between as a dead pairing and re-pairs the same way. If
+that cannot finish, it discards the session and the panel returns to the
+pairing screen.
 
 The practical consequence: **stay signed in to Google in the browser profile
 you paired from.** If you sign out there, the daemon loses its source of fresh

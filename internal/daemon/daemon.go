@@ -56,6 +56,12 @@ type Daemon struct {
 	pairGeneration int
 	cookies        cookieRefresher
 
+	// decryptFails counts libgm decrypt failures since the last message that
+	// decrypted; keyRepairing stops a burst from starting a second recovery.
+	// See keymismatch.go.
+	decryptFails int
+	keyRepairing bool
+
 	// Maintenance starts either after a stored session connects or after a
 	// fresh pairing, whichever happens first, and must run exactly once. It is
 	// tied to the daemon's own context so it stops with the daemon rather than
@@ -113,7 +119,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	}
 	d.mu.Lock()
 	d.auth = auth
-	d.client = libgm.NewClient(auth, nil, d.log.With().Str("component", "libgm").Logger(), exhttp.SensibleClientSettings)
+	d.client = libgm.NewClient(auth, nil, d.log.With().Str("component", "libgm").Logger().Hook(decryptWatch{d}), exhttp.SensibleClientSettings)
 	d.client.SetEventHandler(d.handleEvent)
 	d.mu.Unlock()
 
@@ -171,6 +177,7 @@ func (d *Daemon) initialSync() {
 		if err == nil {
 			d.mu.Lock()
 			// The phone just answered a request, so it is demonstrably alive.
+			d.decryptFails = 0
 			d.status.PhoneOK = true
 			n := len(d.convs)
 			d.mu.Unlock()
@@ -283,6 +290,13 @@ func (d *Daemon) publishStatus() {
 // --- libgm event handling ---
 
 func (d *Daemon) handleEvent(raw any) {
+	switch raw.(type) {
+	case *events.ClientReady, *events.PairSuccessful, *gmproto.Conversation,
+		*libgm.WrappedMessage, *gmproto.Message, *events.PhoneRespondingAgain:
+		// Each of these came from the phone through the session keys.
+		d.noteDecryptOK()
+	}
+
 	switch evt := raw.(type) {
 	case *events.ClientReady:
 		d.log.Info().Int("conversations", len(evt.Conversations)).Msg("Client ready")
