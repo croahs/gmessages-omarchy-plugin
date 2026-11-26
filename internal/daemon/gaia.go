@@ -108,8 +108,12 @@ func (d *Daemon) resumeSession() bool {
 	d.mu.RLock()
 	c := d.client
 	paired := d.paired
+	// A re-pair started because the phone's messages stopped decrypting means
+	// the stored session's keys are dead: resuming it would only trip the
+	// decrypt watch again and re-pair in a loop.
+	deadKeys := d.keyRepairing
 	d.mu.RUnlock()
-	if c == nil || !paired {
+	if c == nil || !paired || deadKeys {
 		return false
 	}
 

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/rs/zerolog"
+	"go.mau.fi/mautrix-gmessages/pkg/libgm"
 )
 
 func TestDecryptWatchCountsOnlyDecodeFailures(t *testing.T) {
@@ -33,5 +34,14 @@ func TestDecryptFailuresTripOnceWhenPaired(t *testing.T) {
 	}
 	if d.decryptFails != decryptFailThreshold*2 {
 		t.Fatalf("counter reset while a recovery was running: %d", d.decryptFails)
+	}
+}
+
+func TestDeadKeysAreNotResumed(t *testing.T) {
+	// A key-mismatch re-pair that fails must not fall back to the stored
+	// session: its keys are dead, so resuming would trip the watch again.
+	d := &Daemon{client: &libgm.Client{}, paired: true, keyRepairing: true}
+	if d.resumeSession() {
+		t.Fatal("resumed a session whose keys no longer decrypt")
 	}
 }
