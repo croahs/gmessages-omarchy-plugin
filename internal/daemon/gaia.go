@@ -60,6 +60,13 @@ func (d *Daemon) StartGaiaPairing(cookies map[string]string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), gaiaPairTimeout)
 		defer cancel()
 
+		// Pairing opens a long poll of its own. One already running for the
+		// stored session would be orphaned rather than replaced: it keeps
+		// pinging the phone for as long as the daemon runs, even after the
+		// session is dropped. Close it first; a failed pairing that falls back
+		// to the stored session reconnects anyway.
+		c.Disconnect()
+
 		err := c.DoGaiaPairing(ctx, func(emoji string) {
 			d.log.Info().Str("emoji", emoji).Msg("Gaia pairing emoji")
 			d.mu.Lock()

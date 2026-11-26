@@ -24,6 +24,13 @@ import (
 const convListLimit = 50
 
 // Daemon owns the libgm client and the cached view of the account.
+// pingInterval is how often libgm asks the phone whether it is still there.
+// Messages arrive by push, not by ping, so the only cost of a long interval is
+// noticing a silent phone later; libgm also asks for updates on its own after
+// about three hours without data. libgm's default is one minute; its maximum
+// is just under four hours.
+const pingInterval = 3 * time.Hour
+
 type Daemon struct {
 	log   zerolog.Logger
 	paths *store.Paths
@@ -124,6 +131,7 @@ func (d *Daemon) Start(ctx context.Context) error {
 	d.auth = auth
 	d.client = libgm.NewClient(auth, nil, d.log.With().Str("component", "libgm").Logger().Hook(decryptWatch{d}), exhttp.SensibleClientSettings)
 	d.client.SetEventHandler(d.handleEvent)
+	d.client.SetPingInterval(pingInterval)
 	d.mu.Unlock()
 
 	if !paired {
